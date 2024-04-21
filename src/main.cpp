@@ -18,12 +18,17 @@ using namespace jovial;
 #define WINDOW_RES Vector2(0, 0)
 #define PADDING (Window::get_current_width() / 40.0f)
 
-namespace Fonts {
-}// namespace Fonts
+struct Answer {
+    String hint;
+    Vector2i coords;
+    int number = 0;
+};
 
 struct Crossword {
     Vector2i size;
     char *letters;
+    Vec<Answer> across;
+    Vec<Answer> down;
 
     explicit Crossword(Vector2i size) : size(size) {
         letters = (char *) malloc(sizeof(char) * size.x * size.y);
@@ -69,9 +74,6 @@ void draw_letter(Vector2 position, char ch, Font *font) {
     int index = ch - font->first_char;
     Glyph &glyph = font->glyphs[index];
 
-    float x = position.x + (float) glyph.offsetX + (float) font->padding;
-    float y = position.y - (float) glyph.offsetY + (float) font->padding - (font->rects[index].h - font->rects[index].y);
-
     auto padding = (float) font->padding;
     Rect2 uv = {font->rects[index].x - padding, font->rects[index].y - padding,
                 font->rects[index].w + padding, font->rects[index].h + padding};
@@ -88,6 +90,33 @@ void draw_letter(Vector2 position, char ch, Font *font) {
     props.color = Colors::Black;
 
     rendering::draw_texture(font->texture, position + Vector2(font->size / 2, font->size / 2), props);
+}
+
+
+void draw_number(Vector2 position, int number, Font *font) {
+    String str = to_string(number);
+    for (int i = 0; i < str.count; ++i) {
+        int index = str[i] - font->first_char;
+        Glyph &glyph = font->glyphs[index];
+
+        auto padding = (float) font->padding;
+        Rect2 uv = {font->rects[index].x - padding, font->rects[index].y - padding,
+                    font->rects[index].w + padding, font->rects[index].h + padding};
+
+        uv.x /= (float) font->texture.width;
+        uv.y /= (float) font->texture.height;
+        uv.w /= (float) font->texture.width;
+        uv.h /= (float) font->texture.height;
+
+        rendering::TextureDrawProperties props;
+        props.centered = true;
+        props.scale = Vector2(1.0f / 2);
+        props.uv = uv;
+        props.size = {font->size, font->size};
+        props.color = Colors::Black;
+
+        rendering::draw_texture(font->texture, position + Vector2(font->size / 5, font->size / 1.3f), props);
+    }
 }
 
 struct CrosswordDrawer {
@@ -141,6 +170,11 @@ struct CrosswordDrawer {
                     draw_letter(pos, letter, &font);
                 }
             }
+        }
+
+        for (auto &answer: crossword.across) {
+            Vector2 pos = Vector2((float) answer.coords.x * square_size, (float) answer.coords.y * square_size) + Vector2(PADDING);
+            draw_number(pos, answer.number, &font);
         }
     }
 
@@ -205,6 +239,22 @@ struct CrosswordNavigator {
     }
 
     void navigate(Crossword &crossword, const CrosswordDrawer &drawer) {
+        switch (mode) {
+            case RIGHT:
+                drawer.font.draw(Vector2(PADDING, PADDING / 3), "Right");
+                break;
+            case DOWN:
+                drawer.font.draw(Vector2(PADDING, PADDING / 3), "Down");
+                break;
+            case LEFT:
+                drawer.font.draw(Vector2(PADDING, PADDING / 3), "Left");
+                break;
+            case UP:
+                drawer.font.draw(Vector2(PADDING, PADDING / 3), "Up");
+                break;
+            default:
+                break;
+        }
         if (Input::is_pressed(Actions::LeftMouseButton)) {
             if (Input::is_pressed(Actions::LeftShift)) {
                 mode = LEFT;
@@ -228,6 +278,19 @@ struct CrosswordNavigator {
 
         if (Input::is_just_pressed(Actions::Escape)) {
             mode = NONE;
+        }
+
+        if (Input::is_just_pressed(Actions::Enter)) {
+            Answer answer;
+            answer.coords = current_square;
+
+            if (mode == DOWN || mode == UP) {
+                answer.number = crossword.down.count;
+                crossword.down.push_back(answer);
+            } else if (mode == LEFT || mode == RIGHT) {
+                answer.number = crossword.across.count;
+                crossword.across.push_back(answer);
+            }
         }
 
         if (mode != NONE) {

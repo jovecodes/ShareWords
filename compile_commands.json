@@ -1,0 +1,12 @@
+[
+{
+  "directory": "/home/jove/Code/linear_algebra_tests/build",
+  "command": "/usr/bin/c++ -DJV_DEBUG -DJV_PHYSICS_DEBUG -DJV_RENDERER_OPENGL -DJV_TARGET_LINUX -I/home/jove/Code/JovialEngine/include -I/home/jove/Code/JovialEngine/include/extern -g -Winvalid-pch -x c++-header -include /home/jove/Code/linear_algebra_tests/build/CMakeFiles/linear_algebra_tests.dir/cmake_pch.hxx -o CMakeFiles/linear_algebra_tests.dir/cmake_pch.hxx.gch -c /home/jove/Code/linear_algebra_tests/build/CMakeFiles/linear_algebra_tests.dir/cmake_pch.hxx.cxx",
+  "file": "/home/jove/Code/linear_algebra_tests/build/CMakeFiles/linear_algebra_tests.dir/cmake_pch.hxx.cxx"
+},
+{
+  "directory": "/home/jove/Code/linear_algebra_tests/build",
+  "command": "/usr/bin/c++ -DJV_DEBUG -DJV_PHYSICS_DEBUG -DJV_RENDERER_OPENGL -DJV_TARGET_LINUX -I/home/jove/Code/JovialEngine/include -I/home/jove/Code/JovialEngine/include/extern -g -Winvalid-pch -include /home/jove/Code/linear_algebra_tests/build/CMakeFiles/linear_algebra_tests.dir/cmake_pch.hxx -o CMakeFiles/linear_algebra_tests.dir/src/main.cpp.o -c /home/jove/Code/linear_algebra_tests/src/main.cpp",
+  "file": "/home/jove/Code/linear_algebra_tests/src/main.cpp"
+}
+]

@@ -89,29 +89,6 @@ struct Crossword {
     }
 };
 
-void draw_letter(Vector2 position, char ch, Font *font) {
-    int index = ch - font->first_char;
-    Glyph &glyph = font->glyphs[index];
-
-    auto padding = (float) font->padding;
-    Rect2 uv = {font->rects[index].x - padding, font->rects[index].y - padding,
-                font->rects[index].w + padding, font->rects[index].h + padding};
-
-    uv.x /= (float) font->texture.width;
-    uv.y /= (float) font->texture.height;
-    uv.w /= (float) font->texture.width;
-    uv.h /= (float) font->texture.height;
-
-    rendering::TextureDrawProperties props;
-    props.centered = true;
-    props.uv = uv;
-    props.size = {font->size, font->size};
-    props.color = Colors::Black;
-
-    rendering::draw_texture(font->texture, position + Vector2(font->size / 2, font->size / 2), props);
-}
-
-
 void draw_number(Vector2 position, int number, Font *font) {
     String str = to_string(number);
     for (int i = 0; i < str.count; ++i) {
@@ -187,7 +164,7 @@ struct CrosswordDrawer {
                     Rect2 square = base_square.move(pos);
                     rendering::draw_rect2(square, props);
                 } else if (!hidden) {
-                    draw_letter(pos, letter, &font);
+                    draw_char(pos, letter, &font);
                 }
             }
         }

@@ -19,7 +19,8 @@ using namespace jovial;
 #define PADDING (Window::get_current_width() / 40.0f)
 
 struct Answer {
-    String hint;
+    char hint[100] = {0};
+
     Vector2i coords;
     int number = 0;
 };
@@ -48,6 +49,24 @@ struct Crossword {
         }
 
         return letters[coord.y * size.x + coord.x];
+    }
+
+    void erase(Vector2i coord) {
+        if (coord.x > size.x || coord.y > size.y) {
+            JV_CORE_ERROR("coord ", coord, " is larger than crossword size of ", size);
+        } else {
+            for (int i = 0; i < across.size(); ++i) {
+                if (across[i].coords == coord) {
+                    across.swap_pop(i);
+                }
+            }
+            for (int i = 0; i < down.size(); ++i) {
+                if (down[i].coords == coord) {
+                    down.swap_pop(i);
+                }
+            }
+            set(coord, '\0');
+        }
     }
 
     void set(Vector2i coord, char c) const {
@@ -131,6 +150,7 @@ struct CrosswordDrawer {
             square_size = new_square_size;
             destroy_font(&font);
             font = Font(font_data, font_data_len, square_size);
+            hints_font = Font(font_data, font_data_len, square_size / 1.5f);
         }
     }
 
@@ -166,22 +186,122 @@ struct CrosswordDrawer {
                     props.color = Colors::Black;
                     Rect2 square = base_square.move(pos);
                     rendering::draw_rect2(square, props);
-                } else {
+                } else if (!hidden) {
                     draw_letter(pos, letter, &font);
                 }
             }
         }
+        draw_answer_numbers(crossword);
+    }
 
+    void draw_answer_numbers(const Crossword &crossword) {
         for (auto &answer: crossword.across) {
-            Vector2 pos = Vector2((float) answer.coords.x * square_size, (float) answer.coords.y * square_size) + Vector2(PADDING);
+            Vector2 pos = Vector2((float) answer.coords.x * square_size, (float) answer.coords.y * square_size) +
+                          Vector2(PADDING);
+            draw_number(pos, answer.number, &font);
+        }
+        for (auto &answer: crossword.down) {
+            Vector2 pos = Vector2((float) answer.coords.x * square_size, (float) answer.coords.y * square_size) +
+                          Vector2(PADDING);
             draw_number(pos, answer.number, &font);
         }
     }
 
+    bool hidden = false;
+
     float square_size = 0;
     Font font;
+    Font hints_font;
     unsigned char *font_data;
     int font_data_len;
+};
+
+struct CrosswordHinter {
+    CrosswordHinter() = default;
+
+    [[nodiscard]] bool editing() const {
+        return edit_offset != -1;
+    }
+
+    void hint(Crossword &crossword, const CrosswordDrawer &drawer) {
+        Vector2 hint_pos(drawer.square_size * (float) crossword.size.x + PADDING * 2,
+                         (float) Window::get_current_height() - PADDING * 2);
+        Vector2 offset(PADDING, 0.0f);
+
+        drawer.hints_font.draw(hint_pos, "Down:");
+        hint_pos.y -= drawer.hints_font.size;
+        for (int i = 0; i < crossword.down.size(); ++i) {
+            drawer.hints_font.draw(hint_pos, to_string(crossword.down[i].number) + ".");
+            drawer.hints_font.draw(hint_pos + offset, crossword.down[i].hint, {.fix_start_pos = true});
+
+            edit_hint(false, i, hint_pos, crossword, drawer);
+
+            hint_pos.y -= drawer.hints_font.size;
+        }
+
+        hint_pos.y -= PADDING;
+
+        drawer.hints_font.draw(hint_pos, "Across:");
+        hint_pos.y -= drawer.hints_font.size;
+        for (int i = 0; i < crossword.across.size(); ++i) {
+            drawer.hints_font.draw(hint_pos, to_string(crossword.across[i].number) + ".");
+            drawer.hints_font.draw(hint_pos + offset, crossword.across[i].hint, {.fix_start_pos = true});
+
+            edit_hint(true, i, hint_pos, crossword, drawer);
+
+            hint_pos.y -= drawer.hints_font.size;
+        }
+    }
+
+    void edit_hint(bool horizontal, int i, Vector2 hint_pos, const Crossword &crossword, const CrosswordDrawer &drawer) {
+        Vector2 mpos = Input::get_mouse_position();
+        Vector2 offset(PADDING, 0.0f);
+
+
+        if (Input::is_just_pressed(Actions::LeftMouseButton) &&
+            mpos.x > hint_pos.x && mpos.y > hint_pos.y && mpos.y < hint_pos.y + drawer.hints_font.size) {
+            editing_horizontal = horizontal;
+            edit_offset = i;
+            if (horizontal)
+                char_index = (int) strlen(crossword.across[i].hint);
+            else
+                char_index = (int) strlen(crossword.down[i].hint);
+        }
+
+        if (editing_horizontal == horizontal && i == edit_offset) {
+            Vector2 cursor_pos = hint_pos + offset;
+            cursor_pos.x += (float) (drawer.hints_font.glyphs[0].advanceX * char_index);
+
+            rendering::draw_line({cursor_pos, cursor_pos + Vector2(0.0f, drawer.hints_font.size * 0.75f)},
+                                 2.0f, {.color = Colors::Black});
+
+            for (char c: Input::get_chars_typed()) {
+                if (horizontal) {
+                    crossword.across[i].hint[char_index] = c;
+                } else {
+                    crossword.down[i].hint[char_index] = c;
+                }
+                char_index += 1;
+            }
+            if (Input::is_typed(Actions::Backspace)) {
+                if (char_index > 0) {
+                    char_index -= 1;
+                    if (horizontal) {
+                        crossword.across[i].hint[char_index] = '\0';
+                    } else {
+                        crossword.down[i].hint[char_index] = '\0';
+                    }
+                }
+            }
+            if (Input::is_typed(Actions::Enter) || Input::is_typed(Actions::Escape)) {
+                edit_offset = -1;
+            }
+        }
+    }
+
+    int char_index = 0;
+    bool editing_horizontal = false;
+    int edit_offset = -1;
 };
 
 struct CrosswordNavigator {
@@ -281,15 +401,41 @@ struct CrosswordNavigator {
         }
 
         if (Input::is_just_pressed(Actions::Enter)) {
-            Answer answer;
-            answer.coords = current_square;
+            if (Input::is_pressed(Actions::LeftControl)) {
+                for (int i = 0; i < crossword.across.size(); ++i) {
+                    if (crossword.across[i].coords == current_square) {
+                        crossword.across.swap_pop(i);
+                    }
+                }
+                for (int i = 0; i < crossword.down.size(); ++i) {
+                    if (crossword.down[i].coords == current_square) {
+                        crossword.down.swap_pop(i);
+                    }
+                }
+            } else if (crossword.at(current_square) != '\0') {
+                Answer answer;
+                answer.coords = current_square;
+                strcpy(answer.hint, "Hint");
 
-            if (mode == DOWN || mode == UP) {
-                answer.number = crossword.down.count;
-                crossword.down.push_back(answer);
-            } else if (mode == LEFT || mode == RIGHT) {
-                answer.number = crossword.across.count;
-                crossword.across.push_back(answer);
+                int num = -1;
+                for (auto &a: crossword.across) {
+                    if (a.coords == current_square)
+                        num = a.number;
+                }
+                for (auto &a: crossword.down) {
+                    if (a.coords == current_square)
+                        num = a.number;
+                }
+
+                if (mode == DOWN || mode == UP) {
+                    if (num == -1) num = crossword.down.count + 1;
+                    answer.number = num;
+                    crossword.down.push_back(answer);
+                } else if (mode == LEFT || mode == RIGHT) {
+                    if (num == -1) num = crossword.across.count + 1;
+                    answer.number = num;
+                    crossword.across.push_back(answer);
+                }
             }
         }
 
@@ -300,7 +446,7 @@ struct CrosswordNavigator {
             }
             if (Input::is_typed(Actions::Backspace)) {
                 move(-direction_vector(mode), crossword);
-                crossword.set(current_square, '\0');
+                crossword.erase(current_square);
             }
 
             arrow_move(UP, crossword);
@@ -351,6 +497,9 @@ struct CrosswordNavigator {
                             mode = DOWN;
                         }
                     } break;
+
+                    case 'x':
+                        crossword.erase(current_square);
                     default:
                         break;
                 }
@@ -358,10 +507,13 @@ struct CrosswordNavigator {
         }
     }
 
-    void update_current_square(const Crossword &crossword, const CrosswordDrawer &drawer) {
+    void update_current_square(Crossword &crossword, const CrosswordDrawer &drawer) {
         Vector2i new_square = (Input::get_mouse_position() - Vector2(PADDING)) / drawer.square_size;
         if (crossword.contains(new_square)) {
             current_square = new_square;
+        }
+        if (Input::is_pressed(Actions::LeftControl)) {
+            crossword.erase(current_square);
         }
     }
 
@@ -380,13 +532,22 @@ public:
     World() : crossword({20, 20}) {}
 
     void update() override {
+        if (Input::is_just_released(Actions::F2)) {
+            drawer.hidden = !drawer.hidden;
+        }
         drawer.draw(crossword);
-        navigator.navigate(crossword, drawer);
+        if (!hinter.editing()) {
+            navigator.navigate(crossword, drawer);
+        } else {
+            navigator.mode = CrosswordNavigator::NONE;
+        }
+        hinter.hint(crossword, drawer);
     }
 
     Crossword crossword;
     CrosswordNavigator navigator;
     CrosswordDrawer drawer;
+    CrosswordHinter hinter;
 };
 
 int main() {

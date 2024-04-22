@@ -1,5 +1,6 @@
 #include "Jovial/Components/Components2D.h"
 #include "Jovial/Components/Util/LazyAssets.h"
+#include "Jovial/Components/Util/Screenshot.h"
 #include "Jovial/Core/Node.h"
 #include "Jovial/FileSystem/FileSystem.h"
 #include "Jovial/JovialEngine.h"
@@ -19,7 +20,7 @@ using namespace jovial;
 #define PADDING (Window::get_current_width() / 40.0f)
 
 struct Answer {
-    char hint[100] = {0};
+    char hint[64] = {0};
 
     Vector2i coords;
     int number = 0;
@@ -30,12 +31,14 @@ struct Crossword {
     char *letters;
     Vec<Answer> across;
     Vec<Answer> down;
+    char title[30];
 
-    explicit Crossword(Vector2i size) : size(size) {
+    explicit Crossword(Vector2i size, const char *title) : size(size), title() {
         letters = (char *) malloc(sizeof(char) * size.x * size.y);
         for (int i = 0; i < size.x * size.y; ++i) {
             letters[i] = '\0';
         }
+        strcpy(this->title, title);
     }
 
     [[nodiscard]] bool contains(Vector2i coord) const {
@@ -79,9 +82,148 @@ struct Crossword {
 
     [[nodiscard]] float square_size() const {
         auto winsize = Window::get_current_size() - Vector2(PADDING * 2);
+        winsize.y -= PADDING;
         float x = winsize.x / (float) size.x;
         float y = winsize.y / (float) size.y;
         return math::min(x, y);
+    }
+
+    void save_to(const fs::Path &path) const {
+        String output;
+        output += title;
+        output += "\n";
+        output += to_string(size.x) + " " + to_string(size.y) + "\n";
+
+        for (int i = 0; i < size.x * size.y; ++i) {
+            if (letters[i] == '\0') {
+                output += '~';
+            } else {
+                output += letters[i];
+            }
+        }
+        output += "across:\n";
+        for (auto &answer: across) {
+            output += to_string(answer.number) + ":" +
+                      to_string(answer.coords.x) + "," + to_string(answer.coords.y) + ":" +
+                      answer.hint + "\n";
+        }
+        output += "down:\n";
+        for (auto &answer: down) {
+            output += to_string(answer.number) + ":" +
+                      to_string(answer.coords.x) + "," + to_string(answer.coords.y) + ":" +
+                      answer.hint + "\n";
+        }
+        fs::write_entire_file(output, path);
+    }
+
+    explicit Crossword(const fs::Path &path) : letters(nullptr), title() {
+        String input = path.read_entire_file();
+        StringView view(input.items, 0, input.count);
+
+        bool error;
+
+        StringView title_view = view.chop_to('\n');
+        for (int i = 0; i < title_view.size(); ++i) {
+            title[i] = title_view[i];
+        }
+        view.begin += title_view.size() + 1;
+
+        StringView width = view.chop_to(' ');
+        view.begin += width.size();
+        view.trim_lead();
+        size.x = atoi(width, &error);
+        if (error) {
+            JV_CORE_FATAL("could not load ", path.str)
+        }
+
+        StringView height = view.chop_to('\n');
+        view.begin += height.size();
+        view.trim_lead();
+        size.y = atoi(height, &error);
+        if (error) {
+            JV_CORE_FATAL("could not load ", path.str)
+        }
+
+        printj("Loaded crossword size: ", size.x, ", ", size.y);
+
+        letters = (char *) malloc(sizeof(char) * size.x * size.y);
+        for (int i = 0; i < size.x * size.y; ++i) {
+            char c = view.first();
+            if (c == '~') {
+                letters[i] = '\0';
+            } else {
+                letters[i] = c;
+            }
+            view.begin += 1;
+        }
+
+        view.begin += view.chop_to('\n').size() + 1;// skip 'across:'
+        if (view.size() == 0) return;
+
+        while (view.first() != 'd') {// down:
+            StringView num = view.chop_to(':');
+            view.begin += num.size() + 1;
+
+            StringView x = view.chop_to(',');
+            view.begin += x.size() + 1;
+
+            StringView y = view.chop_to(':');
+            view.begin += y.size() + 1;
+
+            StringView hint = view.chop_to('\n');
+            view.begin += hint.size() + 1;
+
+            Answer answer;
+
+            answer.number = atoi(num, &error);
+            if (error) { JV_CORE_FATAL("could not load ", path.str) }
+
+            answer.coords.x = atoi(x, &error);
+            if (error) { JV_CORE_FATAL("could not load ", path.str) }
+
+            answer.coords.y = atoi(y, &error);
+            if (error) { JV_CORE_FATAL("could not load ", path.str) }
+
+            for (int i = 0; i < hint.size(); ++i) {
+                answer.hint[i] = hint[i];
+            }
+
+            across.push_back(answer);
+        }
+
+        view.begin += view.chop_to('\n').size() + 1;// skip 'down:'
+        if (view.size() == 0) return;
+
+        while (view.size() > 0) {// down:
+            StringView num = view.chop_to(':');
+            view.begin += num.size() + 1;
+
+            StringView x = view.chop_to(',');
+            view.begin += x.size() + 1;
+
+            StringView y = view.chop_to(':');
+            view.begin += y.size() + 1;
+
+            StringView hint = view.chop_to('\n');
+            view.begin += hint.size() + 1;
+
+            Answer answer;
+
+            answer.number = atoi(num, &error);
+            if (error) { JV_CORE_FATAL("could not load ", path.str) }
+
+            answer.coords.x = atoi(x, &error);
+            if (error) { JV_CORE_FATAL("could not load ", path.str) }
+
+            answer.coords.y = atoi(y, &error);
+            if (error) { JV_CORE_FATAL("could not load ", path.str) }
+
+            for (int i = 0; i < hint.size(); ++i) {
+                answer.hint[i] = hint[i];
+            }
+
+            down.push_back(answer);
+        }
     }
 
     ~Crossword() {
@@ -134,13 +276,13 @@ struct CrosswordDrawer {
     void draw_lines(const Crossword &crossword) const {
         for (int x = 0; x < crossword.size.x + 1; ++x) {
             rendering::draw_line({Vector2((float) x * square_size + PADDING, PADDING),
-                                  Vector2((float) x * square_size + PADDING, (float) Window::get_current_height() - PADDING)},
+                                  Vector2((float) x * square_size + PADDING, (float) Window::get_current_height() - PADDING * 2)},
                                  2.0f,
                                  {.color = Colors::Black});
         }
         for (int y = 0; y < crossword.size.y + 1; ++y) {
             rendering::draw_line({Vector2(PADDING, (float) y * square_size + PADDING),
-                                  Vector2((float) Window::get_current_height() - PADDING, (float) y * square_size + PADDING)},
+                                  Vector2((float) Window::get_current_height() - PADDING * 2, (float) y * square_size + PADDING)},
                                  2.0f,
                                  {.color = Colors::Black});
         }
@@ -151,6 +293,9 @@ struct CrosswordDrawer {
         draw_lines(crossword);
 
         Rect2 base_square({0.0f, 0.0f}, {square_size, square_size});
+
+        font.draw({PADDING, (float) Window::get_current_height() - PADDING * 1.25f},
+                  crossword.title);
 
         for (int x = 0; x < crossword.size.x; ++x) {
             for (int y = 0; y < crossword.size.y; ++y) {
@@ -202,7 +347,7 @@ struct CrosswordHinter {
 
     void hint(Crossword &crossword, const CrosswordDrawer &drawer) {
         Vector2 hint_pos(drawer.square_size * (float) crossword.size.x + PADDING * 2,
-                         (float) Window::get_current_height() - PADDING * 2);
+                         (float) Window::get_current_height() - PADDING * 3);
         Vector2 offset(PADDING, 0.0f);
 
         drawer.hints_font.draw(hint_pos, "Down:");
@@ -234,7 +379,6 @@ struct CrosswordHinter {
         Vector2 mpos = Input::get_mouse_position();
         Vector2 offset(PADDING, 0.0f);
 
-
         if (Input::is_just_pressed(Actions::LeftMouseButton) &&
             mpos.x > hint_pos.x && mpos.y > hint_pos.y && mpos.y < hint_pos.y + drawer.hints_font.size) {
             editing_horizontal = horizontal;
@@ -252,22 +396,21 @@ struct CrosswordHinter {
             rendering::draw_line({cursor_pos, cursor_pos + Vector2(0.0f, drawer.hints_font.size * 0.75f)},
                                  2.0f, {.color = Colors::Black});
 
+            auto *list = &crossword.down;
+            if (horizontal) {
+                list = &crossword.across;
+            }
+
             for (char c: Input::get_chars_typed()) {
-                if (horizontal) {
-                    crossword.across[i].hint[char_index] = c;
-                } else {
-                    crossword.down[i].hint[char_index] = c;
+                if (char_index < JV_ARRAY_LEN((*list)[i].hint)) {
+                    (*list)[i].hint[char_index] = c;
+                    char_index += 1;
                 }
-                char_index += 1;
             }
             if (Input::is_typed(Actions::Backspace)) {
                 if (char_index > 0) {
                     char_index -= 1;
-                    if (horizontal) {
-                        crossword.across[i].hint[char_index] = '\0';
-                    } else {
-                        crossword.down[i].hint[char_index] = '\0';
-                    }
+                    (*list)[i].hint[char_index] = '\0';
                 }
             }
             if (Input::is_typed(Actions::Enter) || Input::is_typed(Actions::Escape)) {
@@ -506,11 +649,17 @@ struct CrosswordNavigator {
 
 class World : public Node {
 public:
-    World() : crossword({20, 20}) {}
+    World() : crossword(fs::Path::res() + "crossword.shareword") {}
 
     void update() override {
+        if (Input::is_just_released(Actions::F1)) {
+            crossword.save_to(fs::Path::res() + "crossword.shareword");
+        }
         if (Input::is_just_released(Actions::F2)) {
             drawer.hidden = !drawer.hidden;
+        }
+        if (Input::is_just_released(Actions::F3)) {
+            take_screenshot("./shareword.png");
         }
         drawer.draw(crossword);
         if (!hinter.editing()) {

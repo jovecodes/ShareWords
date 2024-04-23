@@ -1,5 +1,4 @@
 #include "Jovial/Components/Components2D.h"
-#include "Jovial/Components/Util/LazyAssets.h"
 #include "Jovial/Components/Util/Screenshot.h"
 #include "Jovial/Core/Node.h"
 #include "Jovial/FileSystem/FileSystem.h"
@@ -9,8 +8,11 @@
 #include "Jovial/Shapes/Color.h"
 #include "Jovial/Shapes/Rect.h"
 #include "Jovial/Shapes/ShapeDrawer.h"
+#include "Jovial/Std/Vector.h"
 #include "Jovial/Std/Vector2i.h"
 #include <cctype>
+
+#include "./word_finder.h"
 
 using namespace jovial;
 
@@ -24,6 +26,10 @@ struct Answer {
 
     Vector2i coords;
     int number = 0;
+
+    bool operator<(const Answer &other) const {
+        return number < other.number;
+    }
 };
 
 struct Crossword {
@@ -39,6 +45,30 @@ struct Crossword {
             letters[i] = '\0';
         }
         strcpy(this->title, title);
+    }
+
+    void reconstruct(const fs::Path &path) {
+        Crossword new_crossword(path);
+        strcpy(title, new_crossword.title);
+        size = new_crossword.size;
+        free(letters);
+        letters = new_crossword.letters;
+        new_crossword.letters = nullptr;
+
+        across.clear();
+        down.clear();
+        for (int i = 0; i < new_crossword.across.size(); ++i) {
+            across.push_back({});
+            strcpy(across[i].hint, new_crossword.across[i].hint);
+            across[i].number = new_crossword.across[i].number;
+            across[i].coords = new_crossword.across[i].coords;
+        }
+        for (int i = 0; i < new_crossword.down.size(); ++i) {
+            down.push_back({});
+            strcpy(down[i].hint, new_crossword.down[i].hint);
+            down[i].number = new_crossword.down[i].number;
+            down[i].coords = new_crossword.down[i].coords;
+        }
     }
 
     [[nodiscard]] bool contains(Vector2i coord) const {
@@ -72,6 +102,7 @@ struct Crossword {
         }
     }
 
+
     void set(Vector2i coord, char c) const {
         if (coord.x > size.x || coord.y > size.y) {
             JV_CORE_ERROR("coord ", coord, " is larger than crossword size of ", size);
@@ -86,6 +117,10 @@ struct Crossword {
         float x = winsize.x / (float) size.x;
         float y = winsize.y / (float) size.y;
         return math::min(x, y);
+    }
+
+    [[nodiscard]] Rect2 get_rect() const {
+        return {PADDING, PADDING, (float) size.x * square_size() + PADDING, (float) size.y * square_size() + PADDING};
     }
 
     void save_to(const fs::Path &path) const {
@@ -118,9 +153,12 @@ struct Crossword {
 
     explicit Crossword(const fs::Path &path) : letters(nullptr), title() {
         String input = path.read_entire_file();
+        if (input.is_empty()) {
+            return;
+        }
         StringView view(input.items, 0, input.count);
 
-        bool error;
+        bool error = false;
 
         StringView title_view = view.chop_to('\n');
         for (int i = 0; i < title_view.size(); ++i) {
@@ -133,7 +171,7 @@ struct Crossword {
         view.trim_lead();
         size.x = atoi(width, &error);
         if (error) {
-            JV_CORE_FATAL("could not load ", path.str)
+            JV_CORE_FATAL("could not load ", width, ": ", path.str)
         }
 
         StringView height = view.chop_to('\n');
@@ -548,13 +586,33 @@ struct CrosswordNavigator {
                 }
 
                 if (mode == DOWN || mode == UP) {
-                    if (num == -1) num = crossword.down.count + 1;
+                    if (num == -1) {
+                        num = crossword.down.count + 1;
+                    } else {
+                        for (auto &a: crossword.down) {
+                            if (a.number == num) {
+                                a.number += 1;
+                                break;
+                            }
+                        }
+                    }
                     answer.number = num;
                     crossword.down.push_back(answer);
+                    crossword.down.sort();
                 } else if (mode == LEFT || mode == RIGHT) {
-                    if (num == -1) num = crossword.across.count + 1;
+                    if (num == -1) {
+                        num = crossword.across.count + 1;
+                    } else {
+                        for (auto &a: crossword.across) {
+                            if (a.number == num) {
+                                a.number += 1;
+                                break;
+                            }
+                        }
+                    }
                     answer.number = num;
                     crossword.across.push_back(answer);
+                    crossword.across.sort();
                 }
             }
         }
@@ -647,9 +705,74 @@ struct CrosswordNavigator {
     } mode = NONE;
 };
 
+struct Exporter {
+    void update(Font *font, Vector2 pos) {
+        if (finished) {
+            importing = false;
+            finished = false;
+            exporting = false;
+            char_index = 0;
+            for (char &i: filename) {
+                i = '\0';
+            }
+        }
+
+        if (!exporting && !importing) return;
+
+        for (char c: Input::get_chars_typed()) {
+            if (char_index < JV_ARRAY_LEN(filename)) {
+                filename[char_index] = c;
+                char_index++;
+            }
+        }
+        if (Input::is_typed(Actions::Backspace)) {
+            if (char_index > 0) {
+                char_index--;
+                filename[char_index] = '\0';
+            }
+        }
+        if (Input::is_typed(Actions::Enter)) {
+            finished = true;
+        }
+
+        const char *text = "Crossword path: ";
+        float width = font->measure(text).x;
+        font->draw(pos, text);
+        font->draw(pos + Vector2(width, 0.0f), filename);
+    }
+
+    void export_crossword() {
+        importing = false;
+        finished = false;
+        exporting = true;
+        char_index = 0;
+        for (char &i: filename) {
+            i = '\0';
+        }
+    }
+
+    void import_crossword() {
+        importing = true;
+        finished = false;
+        exporting = false;
+        char_index = 0;
+        for (char &i: filename) {
+            i = '\0';
+        }
+    }
+
+    int char_index = 0;
+    char filename[256] = {};
+
+    bool finished = true;
+
+    bool exporting = false;
+    bool importing = false;
+};
+
 class World : public Node {
 public:
-    World() : crossword(fs::Path::res() + "crossword.shareword") {}
+    World() : crossword({20, 20}, "Untitled crossword") {}
 
     void update() override {
         if (Input::is_just_released(Actions::F1)) {
@@ -662,18 +785,55 @@ public:
             take_screenshot("./shareword.png");
         }
         drawer.draw(crossword);
-        if (!hinter.editing()) {
+
+        if (Input::is_action_just_pressed(Actions::F) &&
+            (Input::is_pressed(Actions::LeftControl) || Input::is_pressed(Actions::RightControl))) {
+            word_finding = !word_finding;
+        }
+        if (Input::is_action_just_pressed(Actions::O) &&
+            (Input::is_pressed(Actions::LeftControl) || Input::is_pressed(Actions::RightControl))) {
+            exporter.import_crossword();
+        }
+        if (Input::is_action_just_pressed(Actions::S) &&
+            (Input::is_pressed(Actions::LeftControl) || Input::is_pressed(Actions::RightControl))) {
+            exporter.export_crossword();
+        }
+
+        if (!hinter.editing() && !word_finding && !exporter.importing && !exporter.exporting) {
             navigator.navigate(crossword, drawer);
         } else {
             navigator.mode = CrosswordNavigator::NONE;
         }
+
         hinter.hint(crossword, drawer);
+
+        Rect2 rect = crossword.get_rect();
+        exporter.update(&drawer.hints_font, Vector2(rect.w + PADDING, rect.h / 2));
+        if (exporter.finished) {
+            if (exporter.exporting) {
+                crossword.save_to(fs::Path(exporter.filename));
+            } else if (exporter.importing) {
+                crossword.reconstruct(fs::Path(exporter.filename));
+            }
+        }
+
+        if (word_finding) {
+            word_finder.find(&drawer.hints_font, {(float) Window::get_current_width() * 0.75f,
+                                                  (float) Window::get_current_height() / 2.0f});
+            if (Input::is_pressed(Actions::Escape)) {
+                word_finding = false;
+            }
+        }
     }
 
     Crossword crossword;
     CrosswordNavigator navigator;
     CrosswordDrawer drawer;
     CrosswordHinter hinter;
+    Exporter exporter;
+
+    WordFinder word_finder;
+    bool word_finding = false;
 };
 
 int main() {
